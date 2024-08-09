@@ -25,4 +25,5 @@ demultiplexAndAlign()
 }
 export -f demultiplexAndAlign
 
+mkdir -p algs
 parallel -a fq2ref.tsv --jobs 12 demultiplexAndAlign

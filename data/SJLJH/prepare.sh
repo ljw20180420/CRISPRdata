@@ -2,7 +2,7 @@ ext1up=${ext1up:-100}
 ext1down=${ext1down:-27}
 ext2up=${ext2up:-27}
 ext2down=${ext2down:-100}
-genome=${genome:-$HOME/hg19_with_bowtie2_index/hg19.fa}
+genome=${genome:-../genome/genome.fa}
 
 getStrand()
 {
@@ -84,6 +84,7 @@ CrickP5()
     tstrand2=$(sed "s/$tstrand2//" <<<"+-")
 }
 
+mkdir -p refs
 while read name chr1 cut1 strand1 chr2 cut2 strand2
 do
     for type in del up down dup sg1 sg2
@@ -94,4 +95,4 @@ do
         CrickP5
         getRef >refs/$name-$type.Crick.ref
     done
-done < refPoses.tsv
+done < ref_poses.tsv
