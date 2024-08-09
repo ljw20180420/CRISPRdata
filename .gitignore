@@ -1,0 +1,15 @@
+LE/data
+LE/refs
+LE/algs
+LPF/data
+LPF/refs
+LPF/algs
+SJLJH/data
+SJLJH/refs
+SJLJH/algs
+SX/data
+SX/refs
+SX/algs
+SX/csvfiles/*
+!SX/csvfiles/*.csv
+groups
