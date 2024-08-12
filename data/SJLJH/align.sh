@@ -26,8 +26,10 @@ getRefAndAlign()
     else
         PAM2="CCN"
     fi
-    zcat data/$fqFile.gz | sed -n '2~4p' | sort | uniq -c | awk -v OFS="\t" '{print $2, $1, 0}' | rearrangement 3<refs/$refFile -s0 $s0 -s1 $s1 -s2 $s2 -u $u -v $v -ru $ru -rv $rv -qu $qu -qv $qv | gawk -f correct_micro_homology.awk -- refs/$refFile $PAM1 $PAM2 | sed 'N;N;s/\n/\t/g' | sort -k2,2nr | gzip >algs/$fqFile.alg.gz
+    zcat data/$fqFile.gz | sed -n '2~4p' | sort | uniq -c | awk -v OFS="\t" '{print $2, $1, 0}' | rearrangement 3<refs/$refFile -s0 $s0 -s1 $s1 -s2 $s2 -u $u -v $v -ru $ru -rv $rv -qu $qu -qv $qv | gawk -f correct_micro_homology.awk -- refs/$refFile $PAM1 $PAM2 | sed 'N;N;s/\n/\t/g' | sort -k2,2nr | awk -v OFS='\t' -v author=$author -v target=$fqFile '{print $0, author, target}' | gzip >algs/$fqFile.alg.gz
 }
 export -f getRefAndAlign
+export author=SJLJH
 
+mkdir -p algs
 parallel -a fq2ref.tsv --jobs 12 getRefAndAlign
