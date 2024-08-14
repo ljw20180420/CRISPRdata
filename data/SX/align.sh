@@ -21,10 +21,11 @@ demultiplexAndAlign()
     removeDuplicates.sh data/$target data/$pair >$rmDupFile
     demultiplexFile=$(mktemp)
     spliterTarget=csvfiles/$spliterTarget spliterPair=csvfiles/$spliterPair minScoreTarget=$minScoreTarget minScorePair=$minScorePair demultiplex.sh $rmDupFile >$demultiplexFile
-    sxCutR2AdapterFilterCumulate.sh $demultiplexFile $minToMapShear | rearrangement 3<refs/$refFile -s0 $s0 -s1 $s1 -s2 $s2 -u $u -v $v -ru $ru -rv $rv -qu $qu -qv $qv | gawk -f correct_micro_homology.awk -- refs/$refFile NGG NGG | sed 'N;N;s/\n/\t/g' | sort -k2,2nr | awk -v OFS='\t' -v author=$author -v target=${target%.gz} '{print $0, author, target}' | gzip >algs/${target%.gz}.alg.gz
+    rm $rmDupFile
+    sxCutR2AdapterFilterCumulate.sh $demultiplexFile $minToMapShear | rearrangement 3<refs/$refFile -s0 $s0 -s1 $s1 -s2 $s2 -u $u -v $v -ru $ru -rv $rv -qu $qu -qv $qv | gawk -f correct_micro_homology.awk -- refs/$refFile NGG NGG | sed 'N;N;s/\n/\t/g' | sort -k2,2nr | gzip >algs/${target%.gz}.alg.gz
+    rm $demultiplexFile
 }
 export -f demultiplexAndAlign
-export author=SX
 
 mkdir -p algs
 parallel -a fq2ref.tsv --jobs 12 demultiplexAndAlign

@@ -8,6 +8,8 @@ import tempfile
 import os
 import gzip
 from datasets import load_dataset, Features, Value
+import tqdm
+import json
 
 # command line inputs
 parser = argparse.ArgumentParser(description="preprocess alignments")
@@ -37,7 +39,6 @@ for author in os.listdir('data'):
         continue
     for data_file in os.listdir(f'data/{author}/algs'):
         data_files.append(f'data/{author}/algs/{data_file}')
-# data_files = ["data/LE/algs/LAMSX-20230512-DCK-D-D-R1_L2_Q0421W0322.R2.fastq.alg.gz", "data/LE/algs/LAMSX-20230512-HPRT-D-D-R2_L2_Q0427W5344.R2.fastq.alg.gz"]
 
 # keep only count, score, ref1_end, ref2_start, cut1, cut2, ref1, ref2, random_insert, author, file_name
 alg_ds = (
@@ -86,23 +87,56 @@ alg_ds = (
     .remove_columns(["score"])['train']
 )
 
-# save results to a temperary parquet file
-temp_file = tempfile.mkstemp(dir = "/home/ljw/sdc1/tmp")[1]
-alg_ds.to_parquet(temp_file)
-del alg_ds
-
-# load parquet file into polars data frame and group by ...
-# write the result to newline delimited JSON representation (parquet containing large_list item is not supported by huggingface datasets at this time)
+alg_ds = load_dataset('parquet', data_files='../crispr.parquet')
+alg_ds = alg_ds.sort(column_names=["ref1", "ref2", 'cut1', 'cut2', "author", "file_name", "ref1_end", "ref2_start", "random_insert"])
+author = file_name = ref1 = ref2 = cut1 = cut2 = None
 with gzip.open("dataset.json.gz", 'wb') as gfd:
-    (
-        pl.scan_parquet(temp_file, low_memory=True)
-        .group_by(["ref1_end", "ref2_start", "random_insert", "cut1", "cut2", "ref1", "ref2", "file_name", "author"])
-        .agg(pl.col("count").sum())
-        .group_by(["cut1", "cut2", "ref1", "ref2", "file_name", "author"])
-        .agg(pl.col("ref1_end"), pl.col("ref2_start"), pl.col("random_insert"), pl.col("count"))
-        .group_by(["ref1", "ref2", "file_name", "author"])
-        .agg(pl.col("cut1"), pl.col("cut2"), pl.col("ref1_end"), pl.col("ref2_start"), pl.col("random_insert"), pl.col("count"))
-        .collect(streaming=True)
-        .write_ndjson(gfd)
-    )
-os.remove(temp_file)
+    for record in tqdm.tqdm(alg_ds):
+        if record["author"] != author or record["file_name"] != file_name or record['ref1'] != ref1 or record['ref2'] != ref2 or record['cut1'] != cut1 or record['cut2'] != cut2:
+            if author:
+                json.dump(
+                    {
+                        'author': author,
+                        'file_name': file_name,
+                        'ref1': ref1,
+                        'ref2': ref2,
+                        'cut1': cut1,
+                        'cut2': cut2,
+                        'ref1_end': ref1_ends,
+                        'ref2_start': ref2_starts,
+                        'random_insert': random_inserts,
+                        'count': counts
+                    },
+                    gfd
+                )
+                gfd.write('\n')
+            ref1_ends, ref2_starts, random_inserts, counts = [record['ref1_end']], [record['ref2_start']], [record['random_insert']], [record['count']]
+        elif record['ref1_end'] == ref1_ends[-1] and record['ref2_start'] == ref2_starts[-1] and record['random_insert'] == random_inserts[-1]:
+            counts[-1] += record['count']
+        else:
+            ref1_ends.append(record['ref1_end'])
+            ref2_starts.append(record['ref2_start'])
+            random_inserts.append(record['random_insert'])
+            counts.append(record['count'])
+
+
+    
+
+# # save results to a temperary parquet file
+# temp_file = tempfile.mkstemp(dir = "/home/ljw/sdc1/tmp")[1]
+# alg_ds.to_parquet(temp_file)
+# del alg_ds
+
+# # load parquet file into polars data frame and group by ...
+# # write the result to newline delimited JSON representation (parquet containing large_list item is not supported by huggingface datasets at this time)
+# with gzip.open("dataset.json.gz", 'wb') as gfd:
+#     (
+#         pl.scan_parquet(temp_file, low_memory=True)
+#         .group_by(["ref1_end", "ref2_start", "random_insert", "cut1", "cut2", "ref1", "ref2", "file_name", "author"])
+#         .agg(pl.col("count").sum())
+#         .group_by(["cut1", "cut2", "ref1", "ref2", "file_name", "author"])
+#         .agg(pl.col("ref1_end"), pl.col("ref2_start"), pl.col("random_insert"), pl.col("count"))
+#         .collect(streaming=True)
+#         .write_ndjson(gfd)
+#     )
+# os.remove(temp_file)

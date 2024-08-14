@@ -21,14 +21,8 @@ import datasets
 # TODO: Add the licence for the dataset here if you can find it
 # _LICENSE = ""
 
-# TODO: Add link to the official dataset URLs here
-# The HuggingFace Datasets library doesn't host the datasets but only points to the original files.
-# This can be an arbitrary nested dict/list of URLs (see below in `_split_generators` method)
-# _URLS = {
-#     "first_domain": "https://huggingface.co/great-new-dataset-first_domain.zip",
-#     "second_domain": "https://huggingface.co/great-new-dataset-second_domain.zip",
-# }
-
+def get_SX_spcas9(dl_manager):
+    dl_manager.ex
 def spcas9_sxlcy_filter(examples):
     return [
         author == "SX" and re.search("^(A2-|A7-|D2-)", file_name) for author, file_name in zip(examples['author'], examples['file_name'])
@@ -45,7 +39,7 @@ def ispymac_sxlcy_filter(examples):
     ]
 
 class CRISPRdataConfig(datasets.BuilderConfig):
-    def __init__(self, filter_func, test_valid_ratio=0.1, seed=63036, **kwargs):
+    def __init__(self, filter_func, test_valid_ratio=0.05, seed=63036, **kwargs):
         """BuilderConfig for CRISPRdata.
 
         Args:
