@@ -4,7 +4,7 @@ ext1up=${ext1up:-100}
 ext1down=${ext1down:-27}
 ext2up=${ext2up:-27}
 ext2down=${ext2down:-100}
-genome=${genome:-../genome/genome.fa}
+genome=${genome:-../../genome/genome.fa}
 bowtie2index=${bowtie2index:-$HOME/hg19_with_bowtie2_index/hg19}
 
 mkdir -p refs
