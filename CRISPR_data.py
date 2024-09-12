@@ -125,13 +125,13 @@ class CRISPRData(datasets.GeneratorBasedBuilder):
                 return observations, insert_counts[self.base_idx[:len(insert_counts)]]
         return observations
 
-    def num2micro_homology(self, ref1, ref2, cut1, cut2, observations, model="CRISPR_diffuser"):
+    def num2micro_homology(self, ref1, ref2, cut1, cut2, observations, model="CRISPR_diffuser", ext1=0, ext2=0):
         # OUTPUT: micro-homology matrix shape=(ref2len+1, ref1len+1) dtype=int64
         assert len(ref1) == self.config.ref1len and len(ref2) == self.config.ref2len, "reference length does not fit"
         indices_num = len(self.diag_indices[0])
         mh_matrix = F.pad(
-            (torch.frombuffer(ref1[:cut1].encode(), dtype=torch.int8).view(1, -1) == torch.frombuffer(ref2[cut2:].encode(), dtype=torch.int8).view(-1, 1)).to(torch.int16),
-            pad=(0, len(ref1) - cut1 + 1, cut2, 1), value=0
+            (torch.frombuffer(ref1[:cut1 + ext1].encode(), dtype=torch.int8).view(1, -1) == torch.frombuffer(ref2[cut2 - ext2:].encode(), dtype=torch.int8).view(-1, 1)).to(torch.int16),
+            pad=(0, len(ref1) - cut1 - ext1 + 1, cut2 - ext2, 1), value=0
         )
         rep_num = torch.cat((
             torch.tensor([-1], dtype=torch.int64),
@@ -159,7 +159,7 @@ class CRISPRData(datasets.GeneratorBasedBuilder):
                 observations[self.diag_indices[0][~mask], self.diag_indices[1][~mask]] = 0
                 observations[self.diag_indices[0][mh_idxs], self.diag_indices[1][mh_idxs]] = counts
                 dstarts = torch.arange(-cut1, len(ref1) - cut1 + 1, dtype=torch.int16)[None, :].expand(len(ref2) + 1, -1)[self.diag_indices]
-                return del_lens, mh_lens, dstarts, observations[self.diag_indices]
+                return del_lens, mh_lens, dstarts, observations[self.diag_indices], mh_idxs
             elif model == "inDelphi":
                 counts = torch.cat([observations[self.diag_indices][mask], counts])
                 gt_poss = (torch.arange(-cut2, len(ref2) - cut2 + 1, dtype=torch.int16) + cut1)[:, None].expand(-1, len(ref1) + 1)[self.diag_indices]
@@ -250,9 +250,12 @@ class CRISPRData(datasets.GeneratorBasedBuilder):
                 del insert_counts[-6:-1]
                 del insert_counts[4::5]
                 ins_counts.append(insert_counts)
-                del_lens, mh_lens, dstarts, counts = self.num2micro_homology(ref1, ref2, cut1, cut2, observations, model="Lindel")
+                del_lens, mh_lens, dstarts, counts, mh_idxs = self.num2micro_homology(ref1, ref2, cut1, cut2, observations, model="Lindel", ext1=2, ext2=1)
                 mask_del_len = (del_lens > 0).logical_and(del_lens < self.config.Lindel_dlen).logical_and(dstarts < 3).logical_and(dstarts + del_lens > -2)
-                mask = mask_del_len.logical_and((mh_lens == 0).logical_or(counts > 0))
+                mask_mh_end = torch.full(mask_del_len.shape, False)
+                mask_mh_end[mh_idxs] = True
+                mask = mask_del_len.logical_and((mh_lens == 0).logical_or(mask_mh_end))
+                breakpoint()
                 del_counts.append(counts[mask_del_len])
                 mh_lens = mh_lens[mask]
                 dstarts = dstarts[mask]
@@ -424,8 +427,8 @@ class CRISPRData(datasets.GeneratorBasedBuilder):
         # It can accept any type or nested list/dict and will give back the same structure with the url replaced with path to local files.
         # By default the archives will be extracted and a path to a cached folder where they are extracted is returned instead of the archive
         hf_endpoint = os.environ.get("HF_ENDPOINT", "https://" + "huggingface.co")
-        downloaded_files = dl_manager.download(f"{hf_endpoint}/datasets/ljw20180420/CRISPR_data/resolve/main/dataset.json.gz")
-        # downloaded_files = dl_manager.download("./test.json.gz")
+        # downloaded_files = dl_manager.download(f"{hf_endpoint}/datasets/ljw20180420/CRISPR_data/resolve/main/dataset.json.gz")
+        downloaded_files = dl_manager.download("./test.json.gz")
         
         ds = datasets.load_dataset('json', data_files=downloaded_files, features=datasets.Features({
             'ref1': datasets.Value('string'),
