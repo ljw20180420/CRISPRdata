@@ -27,8 +27,8 @@ import torch.nn.functional as F
 # _LICENSE = ""
 
 class CRISPRDataConfig(datasets.BuilderConfig):
-    def __init__(self, ref_filter: Callable | None = None, cut_filter: Callable | None = None, author_filter: Callable | None = None, file_filter: Callable | None = None, test_ratio: float = 0.05, validation_ratio: float = 0.05, seed: int = 63036, features: datasets.Features = None, ref1len: int = 127, ref2len: int = 127, DELLEN_LIMIT: int = 60, **kwargs):
-        """BuilderConfig for CRISPRdata.
+    def __init__(self, ref_filter: Callable | None = None, cut_filter: Callable | None = None, author_filter: Callable | None = None, file_filter: Callable | None = None, test_ratio: float = 0.05, validation_ratio: float = 0.05, seed: int = 63036, features: datasets.Features = None, ref1len: int = 127, ref2len: int = 127, DELLEN_LIMIT: int = 60, Lindel_dlen: int = 30, Lindel_mh_len: int = 4, **kwargs):
+        """BuilderConfig for CRISPR_data.
         Args:
         trans_func: *function*, transform function applied after filter.
         ref_filter: *function*, ref_filter(ref1, ref2) -> bool.
@@ -52,6 +52,8 @@ class CRISPRDataConfig(datasets.BuilderConfig):
         self.ref1len = ref1len
         self.ref2len = ref2len
         self.DELLEN_LIMIT = DELLEN_LIMIT
+        self.Lindel_dlen = Lindel_dlen
+        self.Lindel_mh_len = Lindel_mh_len
 
 class CRISPRData(datasets.GeneratorBasedBuilder):
     def __init__(self, **kargs):
@@ -84,14 +86,17 @@ class CRISPRData(datasets.GeneratorBasedBuilder):
         )
 
     # auxiliary methods
-    def get_observations(self, ref1, ref2, cut, INSERT_LIMIT=None):
+    def get_observations(self, ref1, ref2, cut, INSERT_LIMIT=None, count_long_insertion=False):
         assert len(ref1) == self.config.ref1len and len(ref2) == self.config.ref2len, "reference length does not fit"
         observations = torch.zeros(len(ref2) + 1, len(ref1) + 1, dtype=torch.int64)
         if INSERT_LIMIT is not None:
             base = len("ACGTN")
             total = (base ** (INSERT_LIMIT + 1) - base) // (base - 1)
             assert total <= len(self.base_idx), "INSERT_LIMIT is beyonded"
-            insert_counts = torch.zeros(total, dtype=torch.int64)
+            if count_long_insertion:
+                insert_counts = torch.zeros(total + 1, dtype=torch.int64)
+            else:
+                insert_counts = torch.zeros(total, dtype=torch.int64)
             base_vec = base ** torch.arange(INSERT_LIMIT)
             base_cutoff = (base ** (torch.arange(INSERT_LIMIT) + 1) - base) // (base - 1)
             cut1, cut2 = cut['cut1'], cut['cut2']
@@ -103,15 +108,24 @@ class CRISPRData(datasets.GeneratorBasedBuilder):
                         if ref1_end < cut1 or ref2_start > cut2:
                             continue
                         insert = ref1[cut1:ref1_end] + random_insert + ref2[ref2_start:cut2]
-                        if len(insert) > 0 and len(insert) <= INSERT_LIMIT:
-                            insert_counts[base_cutoff[len(insert) - 1] + (
-                                base_vec * (torch.frombuffer(insert.encode(), dtype=torch.int8) % 5)
-                            ).sum()] += count
+                        if len(insert) > 0:
+                            if len(insert) <= INSERT_LIMIT:
+                                insert_counts[base_cutoff[len(insert) - 1] + (
+                                    base_vec * (torch.frombuffer(insert.encode(), dtype=torch.int8) % 5)
+                                ).sum()] += count
+                            elif count_long_insertion:
+                                insert_counts[-1] += count
         if INSERT_LIMIT is not None:
-            return observations, insert_counts[self.base_idx[:len(insert_counts)]]
+            if count_long_insertion:
+                return observations, torch.cat([
+                    insert_counts[self.base_idx[:len(insert_counts)]],
+                    insert_counts[[-1]] 
+                ])
+            else:
+                return observations, insert_counts[self.base_idx[:len(insert_counts)]]
         return observations
 
-    def num2micro_homology(self, ref1, ref2, cut1, cut2, observations, output_mh_merge=False):
+    def num2micro_homology(self, ref1, ref2, cut1, cut2, observations, model="CRISPR_diffuser"):
         # OUTPUT: micro-homology matrix shape=(ref2len+1, ref1len+1) dtype=int64
         assert len(ref1) == self.config.ref1len and len(ref2) == self.config.ref2len, "reference length does not fit"
         indices_num = len(self.diag_indices[0])
@@ -129,31 +143,35 @@ class CRISPRData(datasets.GeneratorBasedBuilder):
         rep_num[1::2] = rep_num[1::2] + 1
         rep_num[2::2] = rep_num[2::2] - 1
         rep_val = rep_val.repeat_interleave(rep_num)
-        mh_matrix[self.diag_indices] = rep_val.to(torch.int16)
-        if output_mh_merge:
-            gt_poss = (torch.arange(-cut2, len(ref2) - cut2 + 1, dtype=torch.int16) + cut1)[:, None].expand(-1, len(ref1) + 1)[self.diag_indices]
-            del_lens = (torch.arange(cut1, cut1 - len(ref1) - 1, -1, dtype=torch.int16)[None, :] + torch.arange(-cut2, len(ref2) - cut2 + 1, dtype=torch.int16)[:, None])[self.diag_indices]
-            mh_idxs = rep_num.cumsum(dim=0)[1::2] - 1
+        mh_lens = rep_val.to(torch.int16)
+        mh_matrix[self.diag_indices] = mh_lens
+        if model in ["inDelphi", "Lindel"]:
             mask = rep_val == 0
-            del_lens = torch.cat([del_lens[mask], del_lens[mh_idxs]])
-            gt_poss = torch.cat([gt_poss[mask], gt_poss[mh_idxs]])
-            mh_lens = torch.cat([
-                mh_matrix[self.diag_indices][mask],
-                mh_matrix[self.diag_indices][mh_idxs]
-            ])
             counts = torch.zeros(len(rep_num) // 2, dtype=torch.int64)
             counts = counts.scatter_add(
                 dim = 0,
                 index = torch.arange(len(rep_num) // 2).repeat_interleave(rep_num[1::2]),
                 src = observations[self.diag_indices][~mask]
             )
-            counts = torch.cat([observations[self.diag_indices][mask], counts])
+            mh_idxs = rep_num.cumsum(dim=0)[1::2] - 1
+            del_lens = (torch.arange(cut1, cut1 - len(ref1) - 1, -1, dtype=torch.int16)[None, :] + torch.arange(-cut2, len(ref2) - cut2 + 1, dtype=torch.int16)[:, None])[self.diag_indices]
+            if model == "Lindel":
+                observations[self.diag_indices[0][~mask], self.diag_indices[1][~mask]] = 0
+                observations[self.diag_indices[0][mh_idxs], self.diag_indices[1][mh_idxs]] = counts
+                dstarts = torch.arange(-cut1, len(ref1) - cut1 + 1, dtype=torch.int16)[None, :].expand(len(ref2) + 1, -1)[self.diag_indices]
+                return del_lens, mh_lens, dstarts, observations[self.diag_indices]
+            elif model == "inDelphi":
+                counts = torch.cat([observations[self.diag_indices][mask], counts])
+                gt_poss = (torch.arange(-cut2, len(ref2) - cut2 + 1, dtype=torch.int16) + cut1)[:, None].expand(-1, len(ref1) + 1)[self.diag_indices]
+                del_lens = torch.cat([del_lens[mask], del_lens[mh_idxs]])
+                gt_poss = torch.cat([gt_poss[mask], gt_poss[mh_idxs]])
+                mh_lens = torch.cat([mh_lens[mask], mh_lens[mh_idxs]])
             return del_lens, mh_lens, gt_poss, counts
-        return mh_matrix.nonzero(as_tuple=True)
+        return mh_matrix
 
     # trans_funcs
     def CRISPR_diffuser_trans_func(self, examples):
-        ref1s, ref2s, cut1s, cut2s, mh_ref1s, mh_ref2s, ob_ref1s, ob_ref2s, ob_vals = [], [], [], [], [], [], [], [], []
+        ref1s, ref2s, cut1s, cut2s, mh_ref1s, mh_ref2s, mh_vals, ob_ref1s, ob_ref2s, ob_vals = [], [], [], [], [], [], [], [], [], []
         for ref1, ref2, cuts in zip(examples['ref1'], examples['ref2'], examples['cuts']):
             for cut in cuts:
                 ref1s.append(ref1)
@@ -162,9 +180,11 @@ class CRISPRData(datasets.GeneratorBasedBuilder):
                 cut1s.append(cut1)
                 cut2s.append(cut2)
                 observations = self.get_observations(ref1, ref2, cut)
-                mh_ref2, mh_ref1 = self.num2micro_homology(ref1, ref2, cut1, cut2, observations)
+                mh_matrix = self.num2micro_homology(ref1, ref2, cut1, cut2, observations)
+                mh_ref2, mh_ref1 = mh_matrix.nonzero(as_tuple=True)
                 mh_ref1s.append(mh_ref1)
                 mh_ref2s.append(mh_ref2)
+                mh_vals.append(mh_matrix[mh_ref2, mh_ref1])
                 ob_ref2, ob_ref1 = observations.nonzero(as_tuple=True)
                 ob_ref1s.append(ob_ref1)
                 ob_ref2s.append(ob_ref2)
@@ -176,6 +196,7 @@ class CRISPRData(datasets.GeneratorBasedBuilder):
             'cut2': cut2s,
             'mh_ref1': mh_ref1s,
             'mh_ref2': mh_ref2s,
+            'mh_val': mh_vals,
             'ob_ref1': ob_ref1s,
             'ob_ref2': ob_ref2s,
             'ob_val': ob_vals
@@ -193,7 +214,7 @@ class CRISPRData(datasets.GeneratorBasedBuilder):
                 cut_list.append(cut1)
                 observations, insert_counts = self.get_observations(ref1, ref2, cut, INSERT_LIMIT = 1)
                 insert_1bpss.append(insert_counts)
-                del_lens, mh_lens, gt_poss, counts = self.num2micro_homology(ref1, ref2, cut1, cut2, observations, output_mh_merge=True)
+                del_lens, mh_lens, gt_poss, counts = self.num2micro_homology(ref1, ref2, cut1, cut2, observations, model="inDelphi")
                 mask = (del_lens > 0) & (del_lens < self.config.DELLEN_LIMIT) & (gt_poss >= cut1) & (gt_poss - del_lens <= cut1)
                 del_lens, mh_lens, gt_poss, counts = del_lens[mask], mh_lens[mask], gt_poss[mask], counts[mask]
                 mask = mh_lens > 0
@@ -217,6 +238,41 @@ class CRISPRData(datasets.GeneratorBasedBuilder):
             'insert_1bp': insert_1bpss
         }
 
+    def Lindel_trans_func(self, examples):
+        refs, cut_list, del_counts, ins_counts, dstarts_list, del_lens_list, mh_lens_list,  = [], [], [], [], [], [], []
+        for ref1, ref2, cuts in zip(examples['ref1'], examples['ref2'], examples['cuts']):
+            for cut in cuts:
+                cut1, cut2 = cut['cut1'], cut['cut2']
+                refs.append(ref1[:cut1] + ref2[cut2:])
+                cut_list.append(cut1)
+                observations, insert_counts = self.get_observations(ref1, ref2, cut, INSERT_LIMIT=2, count_long_insertion=True)
+                insert_counts = insert_counts.tolist()
+                del insert_counts[-6:-1]
+                del insert_counts[4::5]
+                ins_counts.append(insert_counts)
+                del_lens, mh_lens, dstarts, counts = self.num2micro_homology(ref1, ref2, cut1, cut2, observations, model="Lindel")
+                mask_del_len = (del_lens > 0).logical_and(del_lens < self.config.Lindel_dlen).logical_and(dstarts < 3).logical_and(dstarts + del_lens > -2)
+                mask = mask_del_len.logical_and((mh_lens == 0).logical_or(counts > 0))
+                del_counts.append(counts[mask_del_len])
+                mh_lens = mh_lens[mask]
+                dstarts = dstarts[mask]
+                dstarts[(dstarts > 0).logical_and(dstarts <= mh_lens)] = 0
+                del_lens = del_lens[mask]
+                mh_lens = torch.min(del_lens, mh_lens).clamp(0, self.config.Lindel_mh_len)
+                dstarts_list.append(dstarts)
+                del_lens_list.append(del_lens)
+                mh_lens_list.append(mh_lens)
+        return {
+            'ref': refs,
+            'cut': cut_list,
+            'del_count': del_counts,
+            'ins_count': ins_counts,
+            'dstart': dstarts_list,
+            'del_len': del_lens_list,
+            'mh_len': mh_lens_list
+        }
+
+
     # This is an example of a dataset with multiple configurations.
     # If you don't want/need to define several sub-sets in your dataset,
     # just remove the BUILDER_CONFIG_CLASS and the BUILDER_CONFIGS attributes.
@@ -226,7 +282,7 @@ class CRISPRData(datasets.GeneratorBasedBuilder):
     # BUILDER_CONFIG_CLASS = MyBuilderConfig
 
     # You will be able to load one or the other configurations in the following list with
-    # data = datasets.load_dataset('path_to_CRISPRdata', 'config_name')
+    # data = datasets.load_dataset('path_to_CRISPR_data', 'config_name')
 
     features_CRISPR_diffuser = datasets.Features({
         'ref1': datasets.Value('string'),
@@ -235,6 +291,7 @@ class CRISPRData(datasets.GeneratorBasedBuilder):
         'cut2': datasets.Value('int16'),
         'mh_ref1': datasets.Sequence(datasets.Value('int16')),
         'mh_ref2': datasets.Sequence(datasets.Value('int16')),
+        'mh_val': datasets.Sequence(datasets.Value('int16')),
         'ob_ref1': datasets.Sequence(datasets.Value('int16')),
         'ob_ref2': datasets.Sequence(datasets.Value('int16')),
         'ob_val': datasets.Sequence(datasets.Value('int64'))
@@ -250,6 +307,13 @@ class CRISPRData(datasets.GeneratorBasedBuilder):
         'mh_count': datasets.Sequence(datasets.Value('int64')),
         'mhless_count': datasets.Sequence(datasets.Value('int64')),
         'insert_1bp': datasets.Sequence(datasets.Value('int64'))
+    })
+
+    features_Lindel = datasets.Features({
+        'ref': datasets.Value('string'),
+        'cut': datasets.Value('int16'),
+        'del_count': datasets.Sequence(datasets.Value('int64')),
+        'ins_count': datasets.Sequence(datasets.Value('int64'))
     })
 
     VERSION = datasets.Version("1.0.0")
@@ -305,6 +369,30 @@ class CRISPRData(datasets.GeneratorBasedBuilder):
             version = VERSION,
             description = "Data of ispymac protein of sx and lcy for inDelphi training"
         ),
+        CRISPRDataConfig(
+            author_filter = lambda author, ref1, ref2, cut1, cut2: author == "SX",
+            file_filter = lambda file, ref1, ref2, cut1, cut2, author: bool(re.search("^(A2-|A7-|D2-)", file)),
+            features = features_Lindel,
+            name = "SX_spcas9_Lindel",
+            version = VERSION,
+            description = "Data of spcas9 protein of sx and lcy for Lindel training"
+        ),
+        CRISPRDataConfig(
+            author_filter = lambda author, ref1, ref2, cut1, cut2: author == "SX",
+            file_filter = lambda file, ref1, ref2, cut1, cut2, author: bool(re.search("^(X-|x-|B2-|36t-)", file)),
+            features = features_Lindel,
+            name = "SX_spymac_Lindel",
+            version = VERSION,
+            description = "Data of spymac protein of sx and lcy for Lindel training"
+        ),
+        CRISPRDataConfig(
+            author_filter = lambda author, ref1, ref2, cut1, cut2: author == "SX",
+            file_filter = lambda file, ref1, ref2, cut1, cut2, author: bool(re.search("^(i10t-|i83-)", file)),
+            features = features_Lindel,
+            name = "SX_ispymac_Lindel",
+            version = VERSION,
+            description = "Data of ispymac protein of sx and lcy for Lindel training"
+        ),
     ]
 
     # DEFAULT_CONFIG_NAME = "SX_spcas9"  # It's not mandatory to have a default configuration. Just use one if it make sense.
@@ -336,33 +424,34 @@ class CRISPRData(datasets.GeneratorBasedBuilder):
         # It can accept any type or nested list/dict and will give back the same structure with the url replaced with path to local files.
         # By default the archives will be extracted and a path to a cached folder where they are extracted is returned instead of the archive
         hf_endpoint = os.environ.get("HF_ENDPOINT", "https://" + "huggingface.co")
-        downloaded_files = dl_manager.download(f"{hf_endpoint}/datasets/ljw20180420/CRISPRdata/resolve/main/dataset.json.gz")
-        # downloaded_files = "./test.json.gz"
+        downloaded_files = dl_manager.download(f"{hf_endpoint}/datasets/ljw20180420/CRISPR_data/resolve/main/dataset.json.gz")
+        # downloaded_files = dl_manager.download("./test.json.gz")
         
-        # ds = datasets.load_dataset('json', data_files=downloaded_files, features=datasets.Features({
-        #     'ref1': datasets.Value('string'),
-        #     'ref2': datasets.Value('string'),
-        #     'cuts': datasets.Sequence(datasets.Features({
-        #         'cut1': datasets.Value('int16'),
-        #         'cut2': datasets.Value('int16'),
-        #         'authors': datasets.Sequence(datasets.Features({
-        #             'author': datasets.Value('string'),
-        #             'files': datasets.Sequence(datasets.Features({
-        #                 'file': datasets.Value('string'),
-        #                 'ref1_end': datasets.Sequence(datasets.Value('int16')),
-        #                 'ref2_start': datasets.Sequence(datasets.Value('int16')),
-        #                 'random_insert': datasets.Sequence(datasets.Value('string')),
-        #                 'count': datasets.Sequence(datasets.Value('int64'))
-        #             }))
-        #         }))
-        #     }))
-        # }))
-        ds = datasets.load_dataset('json', data_files=downloaded_files)
+        ds = datasets.load_dataset('json', data_files=downloaded_files, features=datasets.Features({
+            'ref1': datasets.Value('string'),
+            'ref2': datasets.Value('string'),
+            'cuts': [datasets.Features({
+                'cut1': datasets.Value('int16'),
+                'cut2': datasets.Value('int16'),
+                'authors': [datasets.Features({
+                    'author': datasets.Value('string'),
+                    'files': [datasets.Features({
+                        'file': datasets.Value('string'),
+                        'ref1_end': datasets.Sequence(datasets.Value('int16')),
+                        'ref2_start': datasets.Sequence(datasets.Value('int16')),
+                        'random_insert': datasets.Sequence(datasets.Value('string')),
+                        'count': datasets.Sequence(datasets.Value('int64'))
+                    })]
+                })]
+            })]
+        }))
         ds = ds.map(self.filter_refs, batched=True)
-        if self.config.name.endswith("_inDelphi"):
-            ds = ds.map(self.inDelphi_trans_func, batched=True, remove_columns=['ref1', 'ref2', 'cuts'])
-        elif self.config.name.endswith("_CRISPR_diffuser"):
+        if self.config.name.endswith("_CRISPR_diffuser"):
             ds = ds.map(self.CRISPR_diffuser_trans_func, batched=True, remove_columns=['cuts'])
+        elif self.config.name.endswith("_inDelphi"):
+            ds = ds.map(self.inDelphi_trans_func, batched=True, remove_columns=['ref1', 'ref2', 'cuts'])
+        elif self.config.name.endswith("_Lindel"):
+            ds = ds.map(self.Lindel_trans_func, batched=True, remove_columns=['ref1', 'ref2', 'cuts'])
         ds = self.split_train_valid_test(ds)
         return [
             datasets.SplitGenerator(
@@ -397,12 +486,12 @@ class CRISPRData(datasets.GeneratorBasedBuilder):
 
     def split_train_valid_test(self, ds):
         # Divide ds's train split to validation and test splits.
-        ds = ds['train'].train_test_split(test_size=self.config.test_ratio + self.config.validation_ratio, shuffle=True, seed=self.config.seed) 
+        ds = ds['train'].train_test_split(test_size=self.config.test_ratio + self.config.validation_ratio, shuffle=True, seed=self.config.seed)
         ds_valid_test = ds['test'].train_test_split(test_size=self.config.test_ratio / (self.config.test_ratio + self.config.validation_ratio), shuffle=False)
         ds['validation'] = ds_valid_test.pop('train')
         ds['test'] = ds_valid_test.pop('test')
         return ds
-    
+
     def filter_refs(self, examples):
         ref1s, ref2s, cutss = [], [], []
         for ref1, ref2, cuts in zip(examples['ref1'], examples['ref2'], examples['cuts']):
@@ -446,22 +535,27 @@ class CRISPRData(datasets.GeneratorBasedBuilder):
 if __name__ == "__main__":
     from huggingface_hub import HfApi
     api = HfApi()
-    api.upload_file(
-        path_or_fileobj="./CRISPRdata.py",
-        path_in_repo="CRISPRdata.py",
-        repo_id="ljw20180420/CRISPRdata",
+    api.create_repo(
+        repo_id="ljw20180420/CRISPR_data",
         repo_type="dataset",
+        exist_ok=True
+    )
+    api.upload_file(
+        path_or_fileobj="./CRISPR_data.py",
+        path_in_repo="CRISPR_data.py",
+        repo_id="ljw20180420/CRISPR_data",
+        repo_type="dataset"
     )
     api.upload_file(
         path_or_fileobj="./dataset.json.gz",
         path_in_repo="dataset.json.gz",
-        repo_id="ljw20180420/CRISPRdata",
-        repo_type="dataset",
+        repo_id="ljw20180420/CRISPR_data",
+        repo_type="dataset"
     )
-    
+
     # from datasets.commands.test import TestCommand
     # test_command = TestCommand(
-    #     dataset="./CRISPRdata.py",
+    #     dataset="./CRISPR_data.py",
     #     name=None,
     #     cache_dir=None,
     #     data_dir=None,
@@ -478,6 +572,6 @@ if __name__ == "__main__":
     # api.upload_file(
     #     path_or_fileobj="./README.md",
     #     path_in_repo="README.md",
-    #     repo_id="ljw20180420/CRISPRdata",
-    #     repo_type="dataset",
+    #     repo_id="ljw20180420/CRISPR_data",
+    #     repo_type="dataset"
     # )
