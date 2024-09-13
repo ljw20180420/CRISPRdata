@@ -255,7 +255,6 @@ class CRISPRData(datasets.GeneratorBasedBuilder):
                 mask_mh_end = torch.full(mask_del_len.shape, False)
                 mask_mh_end[mh_idxs] = True
                 mask = mask_del_len.logical_and((mh_lens == 0).logical_or(mask_mh_end))
-                breakpoint()
                 del_counts.append(counts[mask_del_len])
                 mh_lens = mh_lens[mask]
                 dstarts = dstarts[mask]
@@ -427,8 +426,8 @@ class CRISPRData(datasets.GeneratorBasedBuilder):
         # It can accept any type or nested list/dict and will give back the same structure with the url replaced with path to local files.
         # By default the archives will be extracted and a path to a cached folder where they are extracted is returned instead of the archive
         hf_endpoint = os.environ.get("HF_ENDPOINT", "https://" + "huggingface.co")
-        # downloaded_files = dl_manager.download(f"{hf_endpoint}/datasets/ljw20180420/CRISPR_data/resolve/main/dataset.json.gz")
-        downloaded_files = dl_manager.download("./test.json.gz")
+        downloaded_files = dl_manager.download(f"{hf_endpoint}/datasets/ljw20180420/CRISPR_data/resolve/main/dataset.json.gz")
+        # downloaded_files = dl_manager.download("./test.json.gz")
         
         ds = datasets.load_dataset('json', data_files=downloaded_files, features=datasets.Features({
             'ref1': datasets.Value('string'),
