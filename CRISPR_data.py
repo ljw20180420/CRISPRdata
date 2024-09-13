@@ -111,7 +111,7 @@ class CRISPRData(datasets.GeneratorBasedBuilder):
                         if len(insert) > 0:
                             if len(insert) <= INSERT_LIMIT:
                                 insert_counts[base_cutoff[len(insert) - 1] + (
-                                    base_vec * (torch.frombuffer(insert.encode(), dtype=torch.int8) % 5)
+                                    base_vec[:len(insert)] * (torch.frombuffer(insert.encode(), dtype=torch.int8) % 5)
                                 ).sum()] += count
                             elif count_long_insertion:
                                 insert_counts[-1] += count
