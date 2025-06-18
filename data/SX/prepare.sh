@@ -8,8 +8,8 @@ ext2down=${ext2down:-100}
 mkdir -p refs
 for csvfile in $(ls csvfiles/*.csv)
 do
-    getSxCsvFileRef.sh $csvfile ${GENOME} ${BOWTIE2_INDEX} $ext1up $ext1down $ext2up $ext2down >refs/$(basename $csvfile).ref
-    sxExtractSpliter.sh $csvfile >$csvfile.target.fa 3>$csvfile.pair.fa
+    getSxCsvFileRef.md $csvfile ${GENOME} ${BOWTIE2_INDEX} $ext1up $ext1down $ext2up $ext2down >refs/$(basename $csvfile).ref
+    sxExtractSpliter.md $csvfile >$csvfile.target.fa 3>$csvfile.pair.fa
     bowtie2-build $csvfile.target.fa $csvfile.target.fa
     bowtie2-build $csvfile.pair.fa $csvfile.pair.fa
 done
