@@ -2,7 +2,6 @@ ext1up=${ext1up:-100}
 ext1down=${ext1down:-27}
 ext2up=${ext2up:-27}
 ext2down=${ext2down:-100}
-genome=${genome:-../../genome/genome.fa}
 
 getStrand()
 {
@@ -64,8 +63,8 @@ getRef()
         start2=$(($tcut2 - $ext2down))
         end2=$(($tcut2 + $ext2up))
     fi
-    ref1=$(printf "%s\t%s\t%s\tref1\t.\t%s\n" $tchr1 $start1 $end1 $tstrand1 | bedtools getfasta -s -fi $genome -bed - | sed '1d')
-    ref2=$(printf "%s\t%s\t%s\tref1\t.\t%s\n" $tchr2 $start2 $end2 $tstrand2 | bedtools getfasta -s -fi $genome -bed - | sed '1d')
+    ref1=$(printf "%s\t%s\t%s\tref1\t.\t%s\n" $tchr1 $start1 $end1 $tstrand1 | bedtools getfasta -s -fi ${GENOME} -bed - | sed '1d')
+    ref2=$(printf "%s\t%s\t%s\tref1\t.\t%s\n" $tchr2 $start2 $end2 $tstrand2 | bedtools getfasta -s -fi ${GENOME} -bed - | sed '1d')
     printf "0\t%s\t%s\t%s\t%s\t%s\n" $ref1 $ext1up $ext2up $ref2 ${#ref2}
 }
 

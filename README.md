@@ -2,10 +2,7 @@
 This is a repository use rearr https://github.com/ljw20180420/sx_lcy to align CRISPR data chimerically.
 
 # Select genome
-If multiple sgRNAs targeting various genome sites are used, demultiplex will be necessary. Demultiplex needs the genome bowtie2 index. Select the genome by running the following command in the project directory.
-```bash
-./select_genome.sh
-```
+Set `GENOME` and `BOWTIE2_INDEX` environment variables.
 
 # Alignment
 We align data in `data/LE/` as follows.

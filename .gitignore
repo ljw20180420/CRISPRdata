@@ -12,5 +12,3 @@ data/SX/refs
 data/SX/algs
 data/SX/csvfiles/*
 !data/SX/csvfiles/*.csv
-groups
-genome
