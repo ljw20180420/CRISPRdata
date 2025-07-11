@@ -7,12 +7,11 @@ ext2down=${ext2down:-100}
 
 getRef()
 {
-    mkdir -p refs
     for sample in HPRT DCK
     do
         for primer in U D
         do
-            refFile=refs/$sample-$primer.ref
+            refFile=${ref_path}/$sample-$primer.ref
             >$refFile
             while read description chr1 cut1 strand1 chr2 cut2 strand2
             do
@@ -47,13 +46,13 @@ getRef()
 get_fq2ref()
 {
     >fq2ref.tsv
-    for file in $(ls data)
+    for file in $(ls ${data_path})
     do
         if grep -qF ".R1." <<<$file
         then
             continue
         fi
-        for ref in $(ls refs)
+        for ref in $(ls ${ref_path})
         do
             if grep -qF -- "-${ref%.ref}-" <<<$file
             then
@@ -64,5 +63,8 @@ get_fq2ref()
     done
 }
 
+data_path=${DATA_DIR}/LE/data
+ref_path=${DATA_DIR}/LE/refs
+mkdir -p ${ref_path}
 getRef
 get_fq2ref

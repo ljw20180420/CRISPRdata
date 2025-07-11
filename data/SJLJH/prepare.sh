@@ -83,15 +83,16 @@ CrickP5()
     tstrand2=$(sed "s/$tstrand2//" <<<"+-")
 }
 
-mkdir -p refs
+ref_path=${DATA_DIR}/SJLJH/refs
+mkdir -p ${ref_path}
 while read name chr1 cut1 strand1 chr2 cut2 strand2
 do
     for type in del up down dup sg1 sg2
     do
         getStrand
         getChrCut
-        getRef >refs/$name-$type.Watson.ref
+        getRef >${ref_path}/$name-$type.Watson.ref
         CrickP5
-        getRef >refs/$name-$type.Crick.ref
+        getRef >${ref_path}/$name-$type.Crick.ref
     done
 done < ref_poses.tsv

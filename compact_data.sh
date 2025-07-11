@@ -4,7 +4,7 @@ concat_algs()
 {
     for author in SX SJLJH LE
     do
-        for alg in $(find data/$author/algs -type f)
+        for alg in $(find ${DATA_DIR}/$author/algs -type f)
         do
             bname=$(basename $alg)
             # ref1, ref2, cut1, cut2, author, file, ref1_end, ref2_start, random_insert, count, score

@@ -13,7 +13,7 @@ export qv=${qv:--5}
 getRefAndAlign()
 {
     read fqFile refFile <<<$@
-    read _ ref1 cut1 cut2 ref2 _ <refs/$refFile
+    read _ ref1 cut1 cut2 ref2 _ <${ref_path}/$refFile
     if [ ${ref1:$(($cut1 + 4)):2} == "GG" ]
     then
         PAM1="NGG"
@@ -26,9 +26,12 @@ getRefAndAlign()
     else
         PAM2="CCN"
     fi
-    zcat data/$fqFile.gz | sed -n '2~4p' | sort | uniq -c | awk -v OFS="\t" '{print $2, $1, 0}' | rearrangement 3<refs/$refFile -s0 $s0 -s1 $s1 -s2 $s2 -u $u -v $v -ru $ru -rv $rv -qu $qu -qv $qv | gawk -f correct_micro_homology.awk -- refs/$refFile $PAM1 $PAM2 | sed 'N;N;s/\n/\t/g' | sort -k2,2nr | gzip >algs/$fqFile.alg.gz
+    zcat ${data_path}/$fqFile.gz | sed -n '2~4p' | sort | uniq -c | awk -v OFS="\t" '{print $2, $1, 0}' | rearrangement 3<${ref_path}/$refFile -s0 $s0 -s1 $s1 -s2 $s2 -u $u -v $v -ru $ru -rv $rv -qu $qu -qv $qv | gawk -f correct_micro_homology.awk -- ${ref_path}/$refFile $PAM1 $PAM2 | sed 'N;N;s/\n/\t/g' | sort -k2,2nr | gzip >${alg_path}/$fqFile.alg.gz
 }
 export -f getRefAndAlign
 
-mkdir -p algs
+data_path=${DATA_DIR}/LE/data
+ref_path=${DATA_DIR}/LE/refs
+alg_path=${DATA_DIR}/LE/algs
+mkdir -p ${alg_path}
 parallel -a fq2ref.tsv --jobs 12 getRefAndAlign
